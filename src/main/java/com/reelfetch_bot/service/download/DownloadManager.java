@@ -7,6 +7,7 @@ import com.reelfetch_bot.model.DownloadLog;
 import com.reelfetch_bot.repository.DownloadLogRepository;
 import com.reelfetch_bot.service.cache.UrlCacheService;
 import com.reelfetch_bot.service.storage.StorageService;
+import com.reelfetch_bot.util.InstagramUrlValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -15,6 +16,8 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -65,35 +68,60 @@ public class DownloadManager {
         return CompletableFuture.completedFuture(null);
     }
 
+
     private DownloadResult resolveMedia(String url, DownloadLog logEntry) throws Exception {
+        InstagramUrlValidator.ContentType contentType = InstagramUrlValidator.detectType(url);
 
         Optional<String> cached = cacheService.get(url);
         if (cached.isPresent()) {
             String r2Key = cached.get();
-            log.info("Cache hit for URL: {}", url);
+            log.info("Cache HIT for URL: {} → r2Key: {}", url, r2Key);
             String publicUrl = storageService.publicUrlFor(r2Key);
-            return new DownloadResult(null, r2Key, publicUrl, 0L, true);
+            return new DownloadResult(
+                    List.of(), List.of(r2Key), List.of(publicUrl),
+                    0L, true, contentType, YtDlpService.MediaKind.VIDEO);
         }
+        log.info("Cache MISS for URL: {}, proceeding to download", url);
 
         updateStatus(logEntry, DownloadLog.Status.DOWNLOADING);
-        Path localFile = ytDlpService.download(url);
+        YtDlpService.DownloadedMedia downloaded = ytDlpService.downloadAll(url);
+
+        List<String> r2Keys = new ArrayList<>();
+        List<String> publicUrls = new ArrayList<>();
+        long totalSize = 0;
 
         try {
-            long size = Files.size(localFile);
-
             updateStatus(logEntry, DownloadLog.Status.UPLOADING);
-            String r2Key = storageService.upload(localFile);
-            String publicUrl = storageService.publicUrlFor(r2Key);
+            for (Path file : downloaded.files()) {
+                long size = Files.size(file);
+                totalSize += size;
+                String r2Key = storageService.upload(file);
+                r2Keys.add(r2Key);
+                publicUrls.add(storageService.publicUrlFor(r2Key));
+            }
 
-            cacheService.put(url, r2Key);
+            if (r2Keys.size() == 1) {
+                cacheService.put(url, r2Keys.get(0));
+            }
 
-            return new DownloadResult(localFile, r2Key, publicUrl, size, false);
+            return new DownloadResult(
+                    downloaded.files(), r2Keys, publicUrls,
+                    totalSize, false, contentType, downloaded.kind());
 
         } catch (Exception e) {
-            deleteSessionDir(localFile);
+            downloaded.files().forEach(this::deleteSessionDir);
             throw e;
         }
     }
+
+    private void finaliseLog(DownloadLog entry, DownloadResult result) {
+        entry.setStatus(DownloadLog.Status.COMPLETED);
+        entry.setR2Key(String.join(",", result.r2Keys()));
+        entry.setFileSizeBytes(result.totalSizeBytes());
+        entry.setCompletedAt(OffsetDateTime.now());
+        logRepository.save(entry);
+    }
+
 
     private void deleteSessionDir(Path file) {
         if (file == null) return;
@@ -108,6 +136,7 @@ public class DownloadManager {
         } catch (Exception ignored) {
             log.warn("Failed to clean up session dir for {}", file);
         }
+
     }
 
     private DownloadLog createLog(BotUser user, String url) {
@@ -121,14 +150,6 @@ public class DownloadManager {
 
     private void updateStatus(DownloadLog entry, DownloadLog.Status status) {
         entry.setStatus(status);
-        logRepository.save(entry);
-    }
-
-    private void finaliseLog(DownloadLog entry, DownloadResult result) {
-        entry.setStatus(DownloadLog.Status.COMPLETED);
-        entry.setR2Key(result.r2Key());
-        entry.setFileSizeBytes(result.fileSizeBytes());
-        entry.setCompletedAt(OffsetDateTime.now());
         logRepository.save(entry);
     }
 

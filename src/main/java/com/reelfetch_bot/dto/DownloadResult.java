@@ -1,20 +1,25 @@
 package com.reelfetch_bot.dto;
 
-import java.nio.file.Path;
+import com.reelfetch_bot.service.download.YtDlpService;
+import com.reelfetch_bot.util.InstagramUrlValidator;
 
-/**
- * Carries everything needed after a download completes.
- *
- * @param localFile  path on disk (null if served from cache)
- * @param r2Key      object key in R2
- * @param publicUrl  publicly accessible URL
- * @param fileSizeBytes size of the media file in bytes
- * @param fromCache  true when a prior download was reused
- */
+import java.nio.file.Path;
+import java.util.List;
+
 public record DownloadResult(
-        Path localFile,
-        String r2Key,
-        String publicUrl,
-        long fileSizeBytes,
-        boolean fromCache
-) {}
+        List<Path> localFiles,
+        List<String> r2Keys,
+        List<String> publicUrls,
+        long totalSizeBytes,
+        boolean fromCache,
+        InstagramUrlValidator.ContentType contentType,
+        YtDlpService.MediaKind mediaKind
+) {
+    public String primaryPublicUrl() {
+        return publicUrls.isEmpty() ? null : publicUrls.get(0);
+    }
+
+    public boolean isMultiFile() {
+        return publicUrls.size() > 1;
+    }
+}

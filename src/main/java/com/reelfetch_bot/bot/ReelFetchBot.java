@@ -4,6 +4,8 @@ import com.reelfetch_bot.dto.DownloadResult;
 import com.reelfetch_bot.model.BotUser;
 import com.reelfetch_bot.service.UserService;
 import com.reelfetch_bot.service.download.DownloadManager;
+import com.reelfetch_bot.service.download.YtDlpService;
+import com.reelfetch_bot.service.cache.UrlCacheService;
 import com.reelfetch_bot.util.InstagramUrlValidator;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -11,15 +13,20 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.GetMe;
+import org.telegram.telegrambots.meta.api.methods.send.SendMediaGroup;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
 import org.telegram.telegrambots.meta.api.methods.send.SendVideo;
 import org.telegram.telegrambots.meta.api.objects.*;
+import org.telegram.telegrambots.meta.api.objects.media.InputMediaPhoto;
 import org.telegram.telegrambots.meta.generics.BotSession;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 
 import java.nio.file.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 
@@ -32,18 +39,21 @@ public class ReelFetchBot extends TelegramLongPollingBot {
     private final String botUsername;
     private final DownloadManager downloadManager;
     private final UserService userService;
+    private final UrlCacheService urlCacheService;
     private BotSession botSession;
 
     public ReelFetchBot(
             @Value("${telegram.bot.token}") String token,
             @Value("${telegram.bot.username}") String botUsername,
             DownloadManager downloadManager,
-            UserService userService
+            UserService userService,
+            UrlCacheService urlCacheService
     ) {
         super(token);
         this.botUsername = botUsername;
         this.downloadManager = downloadManager;
         this.userService = userService;
+        this.urlCacheService = urlCacheService;
     }
 
     @PostConstruct
@@ -107,7 +117,18 @@ public class ReelFetchBot extends TelegramLongPollingBot {
                     3. Wait a moment — I'll send you the video!
 
                     Supported: Reels, Posts (video), Stories (public)
+
+                    Commands:
+                    /start - Show welcome message
+                    /help - Show this help
+                    /clear - Clear the URL cache
                     """);
+            return;
+        }
+
+        if ("/clear".equals(command)) {
+            urlCacheService.clearAll();
+            sendPlainText(chatId, "Cache cleared.");
             return;
         }
 
@@ -144,45 +165,139 @@ public class ReelFetchBot extends TelegramLongPollingBot {
 
     private void onSuccess(long chatId, DownloadResult result) {
         try {
-            boolean sendDirect = result.localFile() != null
-                    && result.fileSizeBytes() > 0
-                    && result.fileSizeBytes() <= MAX_TELEGRAM_BYTES;
-
-            if (sendDirect) {
-                sendVideoFile(chatId, result);
-            } else {
-                String caption = result.fromCache()
-                        ? "✅ Here's your video (cached):"
-                        : "✅ File is large — here's your direct link:";
-                sendPlainText(chatId, caption + "\n" + result.publicUrl());
+            if (result.fromCache()) {
+                sendPlainText(chatId, captionFor(result.contentType(), true) + "\n" + result.primaryPublicUrl());
+                return;
             }
+
+            List<Path> files = result.localFiles();
+            boolean isImage = result.mediaKind() == YtDlpService.MediaKind.IMAGE;
+
+            if (isImage) {
+                sendImages(chatId, files, result);
+            } else {
+                sendVideos(chatId, files, result);
+            }
+
         } finally {
-            deleteSilently(result.localFile());
+            result.localFiles().forEach(this::deleteSilently);
+        }
+    }
+
+    private void sendVideos(long chatId, List<Path> files, DownloadResult result) {
+        for (int i = 0; i < files.size(); i++) {
+            Path file = files.get(i);
+            long size;
+            try { size = Files.size(file); } catch (Exception e) { size = 0; }
+
+            String label = files.size() > 1 ? "(" + (i + 1) + "/" + files.size() + ") " : "";
+            String caption = "✅ " + label + captionFor(result.contentType(), false);
+
+            if (size > 0 && size <= MAX_TELEGRAM_BYTES) {
+                sendVideoFile(chatId, file, size, caption);
+            } else {
+                sendPlainText(chatId, "✅ " + label + "File too large — link:\n" + result.publicUrls().get(i));
+            }
+        }
+    }
+
+    private void sendImages(long chatId, List<Path> files, DownloadResult result) {
+        if (files.size() == 1) {
+            // Single image — SendPhoto
+            sendSinglePhoto(chatId, files.get(0), "✅ " + captionFor(result.contentType(), false));
+        } else {
+            // Multiple images — SendMediaGroup (Telegram album, max 10)
+            List<List<Path>> batches = partition(files, 10);
+            for (int b = 0; b < batches.size(); b++) {
+                List<Path> batch = batches.get(b);
+                String label = batches.size() > 1 ? " (part " + (b + 1) + "/" + batches.size() + ")" : "";
+                sendPhotoAlbum(chatId, batch, "✅ " + captionFor(result.contentType(), false) + label);
+            }
+        }
+    }
+
+    private void sendSinglePhoto(long chatId, Path file, String caption) {
+        try {
+            SendPhoto sendPhoto = SendPhoto.builder()
+                    .chatId(String.valueOf(chatId))
+                    .photo(new InputFile(file.toFile(), file.getFileName().toString()))
+                    .caption(caption)
+                    .build();
+            execute(sendPhoto);
+            log.info("Sent photo to chatId {}", chatId);
+        } catch (Exception e) {
+            log.error("Failed to send photo to {}: {}", chatId, e.getMessage(), e);
+            sendPlainText(chatId, caption + "\n(Could not send image directly.)");
+        }
+    }
+
+    private void sendPhotoAlbum(long chatId, List<Path> files, String caption) {
+        try {
+            List<InputMediaPhoto> media = new ArrayList<>();
+            for (int i = 0; i < files.size(); i++) {
+                Path f = files.get(i);
+                InputMediaPhoto photo = InputMediaPhoto.builder()
+                        .media("attach://" + f.getFileName().toString())
+                        .mediaName(f.getFileName().toString())
+                        .newMediaFile(f.toFile())
+                        .caption(i == 0 ? caption : null)   // caption on first item only
+                        .build();
+                media.add(photo);
+            }
+
+            SendMediaGroup album = SendMediaGroup.builder()
+                    .chatId(String.valueOf(chatId))
+                    .medias(new ArrayList<>(media))
+                    .build();
+            execute(album);
+            log.info("Sent photo album ({} images) to chatId {}", files.size(), chatId);
+        } catch (Exception e) {
+            log.error("Failed to send photo album to {}: {}", chatId, e.getMessage(), e);
+            sendPlainText(chatId, caption + "\n(Could not send album directly.)");
         }
     }
 
 
-    private void sendVideoFile(long chatId, DownloadResult result) {
+    private <T> List<List<T>> partition(List<T> list, int size) {
+        List<List<T>> result = new ArrayList<>();
+        for (int i = 0; i < list.size(); i += size) {
+            result.add(list.subList(i, Math.min(i + size, list.size())));
+        }
+        return result;
+    }
+
+    private void sendVideoFile(long chatId, Path localFile, long sizeBytes, String caption) {
         try {
-            Path localFile = result.localFile();
-            if (localFile == null || !Files.exists(localFile)) {
-                throw new IllegalStateException("Local file is unavailable for Telegram upload");
+            if (!Files.exists(localFile)) {
+                throw new IllegalStateException("Local file missing: " + localFile);
             }
 
             SendVideo sendVideo = SendVideo.builder()
                     .chatId(String.valueOf(chatId))
                     .video(new InputFile(localFile.toFile(), localFile.getFileName().toString()))
-                    .caption("✅ Here's your Instagram video!")
+                    .caption(caption)
                     .supportsStreaming(true)
                     .build();
 
             execute(sendVideo);
-            log.info("Sent video to chatId {} ({}B)", chatId, result.fileSizeBytes());
+            log.info("Sent video to chatId {} ({}B)", chatId, sizeBytes);
+
         } catch (Exception e) {
             log.error("Failed to send video to {}: {}", chatId, e.getMessage(), e);
-            sendPlainText(chatId, "✅ Video ready! Download here:\n" + result.publicUrl());
+            sendPlainText(chatId, caption + "\n(Direct send failed — no link available for this item.)");
         }
     }
+
+
+    private String captionFor(InstagramUrlValidator.ContentType type, boolean fromCache) {
+        String suffix = fromCache ? " (cached)" : "";
+        return switch (type) {
+            case REEL  -> "Here's your Instagram Reel!" + suffix;
+            case POST  -> "Here's your Instagram Post!" + suffix;
+            case STORY -> "Here's your Instagram Story!" + suffix;
+        };
+    }
+
 
     private String extractCommand(String text) {
         if (!text.startsWith("/")) return null;

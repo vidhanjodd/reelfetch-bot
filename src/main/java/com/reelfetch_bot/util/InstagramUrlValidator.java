@@ -1,7 +1,6 @@
 package com.reelfetch_bot.util;
 
 import java.net.URI;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class InstagramUrlValidator {
@@ -16,7 +15,6 @@ public final class InstagramUrlValidator {
     public static boolean isValid(String url) {
         if (url == null || url.isBlank()) return false;
         String trimmed = url.trim();
-
         try {
             URI uri = URI.create(trimmed);
             String host = uri.getHost();
@@ -26,7 +24,6 @@ public final class InstagramUrlValidator {
         } catch (IllegalArgumentException e) {
             return false;
         }
-
         return INSTAGRAM_PATTERN.matcher(trimmed).matches();
     }
 
@@ -34,5 +31,15 @@ public final class InstagramUrlValidator {
         int q = url.indexOf('?');
         String stripped = q > 0 ? url.substring(0, q) : url;
         return stripped.endsWith("/") ? stripped : stripped + "/";
+    }
+
+
+    public enum ContentType { REEL, POST, STORY }
+
+    public static ContentType detectType(String url) {
+        String lower = url.toLowerCase();
+        if (lower.contains("/reel/"))    return ContentType.REEL;
+        if (lower.contains("/stories/")) return ContentType.STORY;
+        return ContentType.POST;   // /p/ falls here
     }
 }
