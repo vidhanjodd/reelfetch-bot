@@ -33,7 +33,7 @@ public class R2Config {
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(accessKey, secretKey)))
                 .httpClient(UrlConnectionHttpClient.builder().build())
-                .forcePathStyle(true) // required for R2
+                .forcePathStyle(true)
                 .build();
     }
 }

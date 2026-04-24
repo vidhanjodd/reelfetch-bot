@@ -65,11 +65,8 @@ public class DownloadManager {
         return CompletableFuture.completedFuture(null);
     }
 
-    // ── pipeline ─────────────────────────────────────────────────────────────
-
     private DownloadResult resolveMedia(String url, DownloadLog logEntry) throws Exception {
 
-        // 1. Cache hit?
         Optional<String> cached = cacheService.get(url);
         if (cached.isPresent()) {
             String r2Key = cached.get();
@@ -78,23 +75,40 @@ public class DownloadManager {
             return new DownloadResult(null, r2Key, publicUrl, 0L, true);
         }
 
-        // 2. Download
         updateStatus(logEntry, DownloadLog.Status.DOWNLOADING);
         Path localFile = ytDlpService.download(url);
-        long size = Files.size(localFile);
 
-        // 3. Upload to R2
-        updateStatus(logEntry, DownloadLog.Status.UPLOADING);
-        String r2Key = storageService.upload(localFile);
-        String publicUrl = storageService.publicUrlFor(r2Key);
+        try {
+            long size = Files.size(localFile);
 
-        // 4. Cache the mapping
-        cacheService.put(url, r2Key);
+            updateStatus(logEntry, DownloadLog.Status.UPLOADING);
+            String r2Key = storageService.upload(localFile);
+            String publicUrl = storageService.publicUrlFor(r2Key);
 
-        return new DownloadResult(localFile, r2Key, publicUrl, size, false);
+            cacheService.put(url, r2Key);
+
+            return new DownloadResult(localFile, r2Key, publicUrl, size, false);
+
+        } catch (Exception e) {
+            deleteSessionDir(localFile);
+            throw e;
+        }
     }
 
-    // ── log helpers ──────────────────────────────────────────────────────────
+    private void deleteSessionDir(Path file) {
+        if (file == null) return;
+        try {
+            Files.deleteIfExists(file);
+            Path parent = file.getParent();
+            if (parent != null) {
+                try (var s = Files.list(parent)) {
+                    if (s.findAny().isEmpty()) Files.deleteIfExists(parent);
+                }
+            }
+        } catch (Exception ignored) {
+            log.warn("Failed to clean up session dir for {}", file);
+        }
+    }
 
     private DownloadLog createLog(BotUser user, String url) {
         DownloadLog log = DownloadLog.builder()

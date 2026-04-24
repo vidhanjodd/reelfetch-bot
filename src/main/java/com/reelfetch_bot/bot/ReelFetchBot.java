@@ -22,16 +22,7 @@ import org.telegram.telegrambots.meta.TelegramBotsApi;
 import java.nio.file.*;
 import java.util.Locale;
 
-/**
- * Long-polling Telegram bot.
- *
- * Flow:
- *  1. User sends an Instagram URL
- *  2. Bot replies "⏳ Processing…"
- *  3. Async pipeline runs (download → R2 upload)
- *  4a. File ≤ 50 MB → sendVideo directly
- *  4b. File > 50 MB → send R2 public link
- */
+
 @Slf4j
 @Component
 public class ReelFetchBot extends TelegramLongPollingBot {
@@ -76,8 +67,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
         return botUsername;
     }
 
-    // ── message handler ───────────────────────────────────────────────────────
-
     @Override
     public void onUpdateReceived(Update update) {
         if (!update.hasMessage()) {
@@ -97,7 +86,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
         log.info("Received update {} from chatId {} user {} text={}", update.getUpdateId(), chatId,
                 msg.getFrom() != null ? msg.getFrom().getUserName() : "unknown", text);
 
-        // /start command
         if ("/start".equals(command)) {
             sendMarkdown(chatId, """
                     👋 Welcome to *ReelFetch*!
@@ -110,7 +98,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
             return;
         }
 
-        // /help command
         if ("/help".equals(command)) {
             sendMarkdown(chatId, """
                     *How to use ReelFetch:*
@@ -124,21 +111,28 @@ public class ReelFetchBot extends TelegramLongPollingBot {
             return;
         }
 
-        // Validate Instagram URL
         if (!InstagramUrlValidator.isValid(text)) {
             sendPlainText(chatId, "⚠️ That doesn't look like a valid Instagram URL. Please send a Reel, Post, or Story link.");
             return;
         }
 
+        if (msg.getFrom() == null) {
+            sendPlainText(chatId, "⚠️ Cannot process anonymous messages.");
+            return;
+        }
+
         String cleanUrl = InstagramUrlValidator.sanitize(text);
 
-        // Upsert user
         BotUser botUser = userService.upsert(msg.getFrom());
 
-        // Acknowledge immediately
+        if (Boolean.TRUE.equals(botUser.getIsBlocked())) {
+            log.info("Blocked user {} attempted download of {}", botUser.getTelegramId(), cleanUrl);
+            sendPlainText(chatId, "⛔ Your account has been restricted.");
+            return;
+        }
+
         sendPlainText(chatId, "⏳ Fetching your video, please wait…");
 
-        // Kick off async pipeline
         downloadManager.processAsync(
                 cleanUrl,
                 botUser,
@@ -147,7 +141,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
         );
     }
 
-    // ── result handlers ───────────────────────────────────────────────────────
 
     private void onSuccess(long chatId, DownloadResult result) {
         try {
@@ -168,10 +161,7 @@ public class ReelFetchBot extends TelegramLongPollingBot {
         }
     }
 
-    /**
-     * Send the freshly-downloaded local file directly to Telegram.
-     * This avoids depending on the public URL being immediately reachable.
-     */
+
     private void sendVideoFile(long chatId, DownloadResult result) {
         try {
             Path localFile = result.localFile();
@@ -190,7 +180,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
             log.info("Sent video to chatId {} ({}B)", chatId, result.fileSizeBytes());
         } catch (Exception e) {
             log.error("Failed to send video to {}: {}", chatId, e.getMessage(), e);
-            // Graceful fallback — send the link instead
             sendPlainText(chatId, "✅ Video ready! Download here:\n" + result.publicUrl());
         }
     }
@@ -209,8 +198,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
         }
         return token.toLowerCase(Locale.ROOT);
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private void sendMarkdown(long chatId, String text) {
         SendMessage message = SendMessage.builder()
