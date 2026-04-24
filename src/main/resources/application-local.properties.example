@@ -1,0 +1,22 @@
+# Copy this file to application-local.properties and fill in your real values.
+# This file is safe to commit. The real application-local.properties is ignored by git.
+
+telegram.bot.token=replace-me
+telegram.bot.username=reelfetchxbot
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/reelfetch
+spring.datasource.username=reelfetch
+spring.datasource.password=secret
+
+spring.data.redis.host=localhost
+spring.data.redis.port=6379
+spring.data.redis.password=
+
+r2.account-id=replace-me
+r2.access-key=replace-me
+r2.secret-key=replace-me
+r2.bucket=reelfetch-media
+r2.public-url=replace-me
+
+ytdlp.binary-path=/usr/local/bin/yt-dlp
+ytdlp.download-dir=/tmp/reelfetch
