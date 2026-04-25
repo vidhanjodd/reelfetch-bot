@@ -236,11 +236,13 @@ public class ReelFetchBot extends TelegramLongPollingBot {
             List<InputMediaPhoto> media = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 Path f = files.get(i);
+                // Use a simple key like "file0", "file1" — no dots or special chars
+                String attachKey = "file" + i;
                 InputMediaPhoto photo = InputMediaPhoto.builder()
-                        .media("attach://" + f.getFileName().toString())
-                        .mediaName(f.getFileName().toString())
+                        .media("attach://" + attachKey)
+                        .mediaName(attachKey + ".jpg")
                         .newMediaFile(f.toFile())
-                        .caption(i == 0 ? caption : null)   // caption on first item only
+                        .caption(i == 0 ? caption : null)
                         .build();
                 media.add(photo);
             }
@@ -251,12 +253,16 @@ public class ReelFetchBot extends TelegramLongPollingBot {
                     .build();
             execute(album);
             log.info("Sent photo album ({} images) to chatId {}", files.size(), chatId);
+
         } catch (Exception e) {
             log.error("Failed to send photo album to {}: {}", chatId, e.getMessage(), e);
-            sendPlainText(chatId, caption + "\n(Could not send album directly.)");
+            // Fallback: send each image individually
+            for (int i = 0; i < files.size(); i++) {
+                String label = files.size() > 1 ? " (" + (i + 1) + "/" + files.size() + ")" : "";
+                sendSinglePhoto(chatId, files.get(i), caption + label);
+            }
         }
     }
-
 
     private <T> List<List<T>> partition(List<T> list, int size) {
         List<List<T>> result = new ArrayList<>();

@@ -5,8 +5,13 @@ import java.util.regex.Pattern;
 
 public final class InstagramUrlValidator {
 
+    // Matches:
+    //   /reel/<shortcode>/
+    //   /p/<shortcode>/
+    //   /stories/<username>/<story_id>/
     private static final Pattern INSTAGRAM_PATTERN = Pattern.compile(
-            "https?://(www\\.)?instagram\\.com/(reel|p|stories)/[A-Za-z0-9_\\-]+/?",
+            "https?://(www\\.)?instagram\\.com/(reel|p)/[A-Za-z0-9_\\-]+/?" +
+                    "|https?://(www\\.)?instagram\\.com/stories/[A-Za-z0-9_.]+/\\d+/?",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -15,8 +20,13 @@ public final class InstagramUrlValidator {
     public static boolean isValid(String url) {
         if (url == null || url.isBlank()) return false;
         String trimmed = url.trim();
+
+        // Strip query params before validation
+        int q = trimmed.indexOf('?');
+        String clean = q > 0 ? trimmed.substring(0, q) : trimmed;
+
         try {
-            URI uri = URI.create(trimmed);
+            URI uri = URI.create(clean);
             String host = uri.getHost();
             if (host == null) return false;
             if (!host.equalsIgnoreCase("instagram.com") &&
@@ -24,15 +34,17 @@ public final class InstagramUrlValidator {
         } catch (IllegalArgumentException e) {
             return false;
         }
-        return INSTAGRAM_PATTERN.matcher(trimmed).matches();
+
+        return INSTAGRAM_PATTERN.matcher(clean).matches();
     }
 
     public static String sanitize(String url) {
+        // Strip query params
         int q = url.indexOf('?');
         String stripped = q > 0 ? url.substring(0, q) : url;
+        // Ensure trailing slash
         return stripped.endsWith("/") ? stripped : stripped + "/";
     }
-
 
     public enum ContentType { REEL, POST, STORY }
 
@@ -40,6 +52,6 @@ public final class InstagramUrlValidator {
         String lower = url.toLowerCase();
         if (lower.contains("/reel/"))    return ContentType.REEL;
         if (lower.contains("/stories/")) return ContentType.STORY;
-        return ContentType.POST;   // /p/ falls here
+        return ContentType.POST;
     }
 }
