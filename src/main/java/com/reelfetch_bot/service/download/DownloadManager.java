@@ -100,6 +100,7 @@ public class DownloadManager {
                 publicUrls.add(storageService.publicUrlFor(r2Key));
             }
 
+            log.info("Caching single-file result: URL={} → r2Key={}", url, r2Keys.size() == 1 ? r2Keys.get(0) : "multiple");
             if (r2Keys.size() == 1) {
                 cacheService.put(url, r2Keys.get(0));
             }

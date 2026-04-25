@@ -166,7 +166,8 @@ public class ReelFetchBot extends TelegramLongPollingBot {
     private void onSuccess(long chatId, DownloadResult result) {
         try {
             if (result.fromCache()) {
-                sendPlainText(chatId, captionFor(result.contentType(), true) + "\n" + result.primaryPublicUrl());
+                String cacheNote = "(returned from cache - use /clear to force a fresh download)";
+                sendPlainText(chatId, captionFor(result.contentType(), true) + "\n" + result.primaryPublicUrl() + "\n\n" + cacheNote);
                 return;
             }
 
