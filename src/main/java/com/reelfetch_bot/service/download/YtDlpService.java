@@ -43,14 +43,12 @@ public class YtDlpService {
 
     public record DownloadedMedia(List<Path> files, MediaKind kind) {}
 
-    // ── Main entry point ──────────────────────────────────────────────────────
 
     public DownloadedMedia downloadAll(String url) throws DownloadException {
         validateUrl(url);
         InstagramUrlValidator.ContentType type = InstagramUrlValidator.detectType(url);
         Path outDir = prepareOutputDir();
 
-        // Step 1: Try yt-dlp for video
         VideoResult videoResult = tryVideoDownload(url, outDir, type);
 
         if (!videoResult.files().isEmpty()) {
@@ -58,7 +56,6 @@ public class YtDlpService {
             return new DownloadedMedia(videoResult.files(), MediaKind.VIDEO);
         }
 
-        // Step 2: fallback to instaloader for images
         if (videoResult.looksLikeImagePost()) {
             log.info("yt-dlp signals image-only post, falling back to instaloader for: {}", url);
         } else {
@@ -74,7 +71,6 @@ public class YtDlpService {
         throw new DownloadException("No media found. The post may be private or require login.");
     }
 
-    // ── yt-dlp video download ─────────────────────────────────────────────────
 
     private record VideoResult(List<Path> files, boolean looksLikeImagePost) {}
 
@@ -126,7 +122,6 @@ public class YtDlpService {
         return cmd;
     }
 
-    // ── instaloader image download ────────────────────────────────────────────
 
     private List<Path> tryInstalaoderDownload(String url, Path outDir) throws DownloadException {
         String shortcode = extractShortcode(url);
@@ -183,7 +178,6 @@ public class YtDlpService {
         return m.find() ? m.group(1) : null;
     }
 
-    // ── Process execution ─────────────────────────────────────────────────────
 
     private String runProcess(List<String> cmd, String url) throws DownloadException {
         try {
@@ -212,7 +206,6 @@ public class YtDlpService {
         }
     }
 
-    // ── File helpers ──────────────────────────────────────────────────────────
 
     private List<Path> findFiles(Path dir, Set<String> extensions) throws DownloadException {
         try (var stream = Files.list(dir)) {
@@ -261,7 +254,6 @@ public class YtDlpService {
         }
     }
 
-    // ── Misc helpers ──────────────────────────────────────────────────────────
 
     private void validateUrl(String url) throws DownloadException {
         if (url == null || url.isBlank()) {

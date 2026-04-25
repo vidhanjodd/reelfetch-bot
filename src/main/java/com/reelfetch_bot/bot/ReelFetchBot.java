@@ -203,10 +203,8 @@ public class ReelFetchBot extends TelegramLongPollingBot {
 
     private void sendImages(long chatId, List<Path> files, DownloadResult result) {
         if (files.size() == 1) {
-            // Single image — SendPhoto
             sendSinglePhoto(chatId, files.get(0), "✅ " + captionFor(result.contentType(), false));
         } else {
-            // Multiple images — SendMediaGroup (Telegram album, max 10)
             List<List<Path>> batches = partition(files, 10);
             for (int b = 0; b < batches.size(); b++) {
                 List<Path> batch = batches.get(b);
@@ -236,7 +234,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
             List<InputMediaPhoto> media = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 Path f = files.get(i);
-                // Use a simple key like "file0", "file1" — no dots or special chars
                 String attachKey = "file" + i;
                 InputMediaPhoto photo = InputMediaPhoto.builder()
                         .media("attach://" + attachKey)
