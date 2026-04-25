@@ -253,7 +253,6 @@ public class ReelFetchBot extends TelegramLongPollingBot {
 
         } catch (Exception e) {
             log.error("Failed to send photo album to {}: {}", chatId, e.getMessage(), e);
-            // Fallback: send each image individually
             for (int i = 0; i < files.size(); i++) {
                 String label = files.size() > 1 ? " (" + (i + 1) + "/" + files.size() + ")" : "";
                 sendSinglePhoto(chatId, files.get(i), caption + label);
